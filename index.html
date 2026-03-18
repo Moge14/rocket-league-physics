@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Rocket League - Flip Resets & Walls</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; text-shadow: 2px 2px 2px black; }
+        #boost-bar { position: absolute; bottom: 30px; right: 30px; width: 200px; height: 20px; border: 2px solid white; }
+        #boost-fill { height: 100%; background: cyan; width: 100%; transition: width 0.1s; }
+        kbd { background: #333; padding: 2px 5px; border-radius: 4px; border: 1px solid #555; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h2>Advanced Physics Tester</h2>
+        <p><kbd>Space</kbd> : Jump / <strong>Flip (In Air)</strong></p>
+        <p><kbd>E</kbd> : <strong>BOOST</strong></p>
+        <p><em>Touch the ball with the car to Reset your flip!</em></p>
+    </div>
+    <div id="boost-bar"><div id="boost-fill"></div></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
+
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(10, 50, 10);
+        scene.add(light, new THREE.AmbientLight(0x404040));
+
+        // --- PHYSICS ---
+        const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -18, 0) });
+        
+        // --- ARENA (The Cage) ---
+        function createWall(w, h, d, x, y, z, color = 0x333344) {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshPhongMaterial({ color, transparent: true, opacity: 0.3 }));
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            const body = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(w/2, h/2, d/2)) });
+            body.position.set(x, y, z);
+            world.addBody(body);
+        }
+
+        // Floor, Ceiling, and 4 Walls
+        createWall(60, 1, 100, 0, 0, 0, 0x22aa22); // Floor
+        createWall(60, 1, 100, 0, 40, 0);          // Ceiling
+        createWall(1, 40, 100, 30, 20, 0);         // Right
+        createWall(1, 40, 100, -30, 20, 0);        // Left
+        createWall(60, 40, 1, 0, 20, 50);          // Back
+        createWall(60, 40, 1, 0, 20, -50);         // Front
+
+        // --- BALL ---
+        const ballBody = new CANNON.Body({ mass: 1, shape: new CANNON.Sphere(2), position: new CANNON.Vec3(0, 5, -10) });
+        ballBody.linearDamping = 0.1;
+        world.addBody(ballBody);
+        const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(2), new THREE.MeshPhongMaterial({ color: 0xffffff }));
+        scene.add(ballMesh);
+
+        // --- CAR ---
+        const carBody = new CANNON.Body({ mass: 5, shape: new CANNON.Box(new CANNON.Vec3(0.8, 0.4, 1.2)), position: new CANNON.Vec3(0, 2, 0) });
+        world.addBody(carBody);
+        const carMesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 2.4), new THREE.MeshPhongMaterial({ color: 0x0077ff }));
+        scene.add(carMesh);
+
+        // --- GAME STATE ---
+        let canFlip = true;
+        let isGrounded = false;
+        const keys = {};
+
+        // Flip Reset detection (Collision with ball or floor)
+        carBody.addEventListener("collide", (e) => {
+            // If we hit the ball or floor, reset the flip
+            canFlip = true;
+        });
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+            if (e.code === 'Space') {
+                handleJump();
+            }
+        });
+        window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        function handleJump() {
+            const forward = carBody.quaternion.vmult(new CANNON.Vec3(0, 0, 1));
+            
+            if (isGrounded) {
+                carBody.velocity.y = 10;
+                isGrounded = false;
+                canFlip = true; // Allow a double jump/flip
+            } else if (canFlip) {
+                // FLIP / DODGE MECHANIC
+                // Sudden burst in current facing direction
+                const dodgeForce = 12;
+                carBody.velocity.x += forward.x * dodgeForce;
+                carBody.velocity.y += forward.y * dodgeForce + 2;
+                carBody.velocity.z += forward.z * dodgeForce;
+                
+                canFlip = false; // Flip used!
+                carMesh.material.color.set(0xff00ff); // Flash purple on flip
+                setTimeout(() => carMesh.material.color.set(0x0077ff), 200);
+            }
+        }
+
+        // --- MAIN LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            world.fixedStep();
+
+            isGrounded = carBody.position.y < 1.1;
+            if (isGrounded) canFlip = true;
+
+            // Movement Logic
+            const forward = carBody.quaternion.vmult(new CANNON.Vec3(0, 0, 1));
+            
+            if (keys['KeyW']) {
+                if (isGrounded) carBody.applyForce(forward.scale(150), carBody.position);
+                else carBody.angularVelocity.x -= 0.15; // Pitch
+            }
+            if (keys['KeyS']) {
+                if (isGrounded) carBody.applyForce(forward.scale(-150), carBody.position);
+                else carBody.angularVelocity.x += 0.15;
+            }
+            if (keys['KeyA']) carBody.angularVelocity.y += 0.1;
+            if (keys['KeyD']) carBody.angularVelocity.y -= 0.1;
+
+            // BOOST (E)
+            if (keys['KeyE']) {
+                carBody.applyForce(forward.scale(200), carBody.position);
+                carMesh.scale.set(1.1, 1.1, 1.1); // Visual feedback
+            } else {
+                carMesh.scale.set(1, 1, 1);
+            }
+
+            // Sync visuals
+            carMesh.position.copy(carBody.position);
+            carMesh.quaternion.copy(carBody.quaternion);
+            ballMesh.position.copy(ballBody.position);
+
+            // Camera follow
+            const camOffset = new THREE.Vector3(0, 4, -12).applyQuaternion(carMesh.quaternion);
+            camera.position.lerp(carMesh.position.clone().add(camOffset), 0.1);
+            camera.lookAt(carMesh.position);
+
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
