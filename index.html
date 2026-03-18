@@ -2,20 +2,21 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Fixed Rocket League Physics</title>
+    <title>Rocket League Clone - Stability Update</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #050505; font-family: sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; border-left: 5px solid #00d2ff; }
-        kbd { background: #444; padding: 2px 6px; border-radius: 4px; }
+        body { margin: 0; overflow: hidden; background: #060606; font-family: sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border-left: 5px solid #ffcc00; pointer-events: none; }
+        kbd { background: #333; padding: 2px 5px; border-radius: 4px; border: 1px solid #555; font-family: monospace; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h2 style="margin:0">Stable Physics Tester</h2>
-        <p><kbd>W</kbd> <kbd>S</kbd> : Drive | <kbd>A</kbd> <kbd>D</kbd> : Turn</p>
+        <h2 style="margin:0; color: #ffcc00;">V3: Traction Update</h2>
+        <p><kbd>W</kbd> <kbd>S</kbd> : Gas / Brake</p>
+        <p><kbd>A</kbd> <kbd>D</kbd> : Steering</p>
         <p><kbd>Space</kbd> : Jump | <kbd>E</kbd> : Boost</p>
-        <p style="color: #00d2ff; font-size: 0.8em;">Sphere-Colider Mode: <strong>STABLE</strong></p>
+        <p style="font-size: 0.8em; opacity: 0.7;">Physics: High-Friction / Low-Volatility</p>
     </div>
 
     <script type="importmap">
@@ -31,94 +32,127 @@
         import * as THREE from 'three';
         import * as CANNON from 'cannon-es';
 
-        // --- SETUP ---
+        // --- SCENE SETUP ---
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        const light = new THREE.DirectionalLight(0xffffff, 1.5);
-        light.position.set(10, 50, 10);
-        scene.add(light, new THREE.AmbientLight(0x404040));
+        const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -30, 0) });
 
-        const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -25, 0) });
+        // --- MATERIALS (The Secret to Traction) ---
+        const groundMat = new CANNON.Material('ground');
+        const carMat = new CANNON.Material('car');
+        const ballMat = new CANNON.Material('ball');
 
-        // --- THE GROUND ---
-        const floorBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
-        floorBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-        world.addBody(floorBody);
-        scene.add(new THREE.GridHelper(200, 40, 0x00d2ff, 0x222222));
+        // Define how materials interact
+        world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, { 
+            friction: 1.5,      // High friction = no sliding
+            restitution: 0.1    // Low bounce = car sticks to ground
+        }));
+        world.addContactMaterial(new CANNON.ContactMaterial(groundMat, ballMat, { 
+            friction: 0.4, 
+            restitution: 0.6    // Ball bounces but loses energy
+        }));
 
-        // --- THE CAR (THE SECRET FIX) ---
-        // We use a SPHERE for physics because it can't get stuck on corners!
-        const carRadius = 1.2;
+        // --- ARENA (Floor & Walls) ---
+        const size = { x: 60, z: 100, h: 40 };
+        
+        function createPlane(w, l, x, y, z, rx, ry, color) {
+            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, l), new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }));
+            mesh.position.set(x, y, z);
+            mesh.rotation.set(rx, ry, 0);
+            scene.add(mesh);
+            
+            const body = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), material: groundMat });
+            body.position.set(x, y, z);
+            body.quaternion.setFromEuler(rx, ry, 0);
+            world.addBody(body);
+        }
+
+        createPlane(size.x, size.z, 0, 0, 0, -Math.PI/2, 0, 0x1a472a); // Floor
+        createPlane(size.x, size.h, 0, size.h/2, size.z/2, 0, Math.PI, 0x111111); // Back Wall
+        createPlane(size.x, size.h, 0, size.h/2, -size.z/2, 0, 0, 0x111111); // Front Wall
+        createPlane(size.z, size.h, size.x/2, size.h/2, 0, 0, -Math.PI/2, 0x111111); // Right Wall
+        createPlane(size.z, size.h, -size.x/2, size.h/2, 0, 0, Math.PI/2, 0x111111); // Left Wall
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(10, 50, 10);
+        scene.add(dirLight);
+
+        // --- THE CAR (Improved Look) ---
+        const carGroup = new THREE.Group();
+        // Body
+        const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 2.8), new THREE.MeshPhongMaterial({ color: 0xff4400 }));
+        // Cabin
+        const cabinMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 1.2), new THREE.MeshPhongMaterial({ color: 0x333333 }));
+        cabinMesh.position.set(0, 0.5, -0.2);
+        // Spoiler
+        const spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.4), new THREE.MeshPhongMaterial({ color: 0xff4400 }));
+        spoiler.position.set(0, 0.7, -1.2);
+        carGroup.add(bodyMesh, cabinMesh, spoiler);
+        scene.add(carGroup);
+
         const carBody = new CANNON.Body({ 
-            mass: 10, 
-            shape: new CANNON.Sphere(carRadius),
-            position: new CANNON.Vec3(0, 5, 0)
+            mass: 15, 
+            shape: new CANNON.Sphere(1.2), // Sphere collider for smoothness
+            position: new CANNON.Vec3(0, 2, 20),
+            material: carMat
         });
-        carBody.angularDamping = 0.95; // High damping prevents infinite rolling
-        carBody.linearDamping = 0.1;
+        carBody.angularDamping = 0.98; // Keeps car from spinning wildly
         world.addBody(carBody);
 
-        // Visual Box (The car you see)
-        const carVisual = new THREE.Mesh(
-            new THREE.BoxGeometry(1.8, 0.8, 2.8),
-            new THREE.MeshPhongMaterial({ color: 0x3a7bd5 })
-        );
-        scene.add(carVisual);
-
-        // --- THE BALL ---
-        const ballBody = new CANNON.Body({ mass: 1, shape: new CANNON.Sphere(2), position: new CANNON.Vec3(0, 5, -15) });
+        // --- THE BALL (Heavy & Stable) ---
+        const ballBody = new CANNON.Body({ 
+            mass: 2, 
+            shape: new CANNON.Sphere(2.2), 
+            position: new CANNON.Vec3(0, 5, 0),
+            material: ballMat 
+        });
+        ballBody.linearDamping = 0.2; // Air resistance so it doesn't roll forever
         world.addBody(ballBody);
-        const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(2), new THREE.MeshPhongMaterial({ color: 0xffffff }));
+        const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(2.2, 32, 32), new THREE.MeshPhongMaterial({ color: 0xeeeeee }));
         scene.add(ballMesh);
 
+        // --- CONTROLS ---
         const keys = {};
+        let carRotation = Math.PI;
         window.addEventListener('keydown', (e) => keys[e.code] = true);
         window.addEventListener('keyup', (e) => keys[e.code] = false);
-
-        let carRotation = 0; // Track the visual rotation separately
 
         function animate() {
             requestAnimationFrame(animate);
             world.fixedStep();
 
-            const isGrounded = carBody.position.y < carRadius + 0.1;
-            
-            // 1. DIRECTIONAL LOGIC
-            // We drive based on where the visual car is facing
+            const isGrounded = carBody.position.y < 1.3;
             const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), carRotation);
             const cannonForward = new CANNON.Vec3(forward.x, forward.y, forward.z);
 
-            // 2. MOVEMENT
-            if (keys['KeyW']) carBody.applyForce(cannonForward.scale(isGrounded ? 500 : 100), carBody.position);
-            if (keys['KeyS']) carBody.applyForce(cannonForward.scale(isGrounded ? -500 : -100), carBody.position);
+            // Driving with "Traction"
+            if (keys['KeyW']) carBody.applyForce(cannonForward.scale(isGrounded ? 800 : 150), carBody.position);
+            if (keys['KeyS']) carBody.applyForce(cannonForward.scale(isGrounded ? -800 : -150), carBody.position);
             
-            // 3. STEERING (Rotate the visual car)
-            if (keys['KeyA']) carRotation += 0.05;
-            if (keys['KeyD']) carRotation -= 0.05;
+            // Steering (Speed-dependent)
+            const speed = carBody.velocity.length();
+            if (keys['KeyA']) carRotation += 0.06 * Math.min(1, speed * 0.1);
+            if (keys['KeyD']) carRotation -= 0.06 * Math.min(1, speed * 0.1);
 
-            // 4. JUMP & BOOST
-            if (keys['Space'] && isGrounded) {
-                carBody.velocity.y = 12;
-                keys['Space'] = false;
-            }
-            if (keys['KeyE']) carBody.applyForce(cannonForward.scale(600), carBody.position);
+            // Jump & Boost
+            if (keys['Space'] && isGrounded) { carBody.velocity.y = 12; keys['Space'] = false; }
+            if (keys['KeyE']) carBody.applyForce(cannonForward.scale(1000), carBody.position);
 
-            // --- SYNC VISUALS ---
-            carVisual.position.copy(carBody.position);
-            
-            // Tilt the car visual slightly based on velocity to make it feel alive
-            carVisual.rotation.set(0, carRotation, 0);
-            
+            // Sync Visuals
+            carGroup.position.copy(carBody.position);
+            carGroup.rotation.y = carRotation;
             ballMesh.position.copy(ballBody.position);
 
-            // Camera follow
-            const camOffset = new THREE.Vector3(0, 6, -15).applyAxisAngle(new THREE.Vector3(0, 1, 0), carRotation);
-            camera.position.lerp(carVisual.position.clone().add(camOffset), 0.1);
-            camera.lookAt(carVisual.position);
+            // Dynamic Camera
+            const camOffset = new THREE.Vector3(0, 6, -16).applyAxisAngle(new THREE.Vector3(0, 1, 0), carRotation);
+            camera.position.lerp(carGroup.position.clone().add(camOffset), 0.1);
+            camera.lookAt(carGroup.position);
 
             renderer.render(scene, camera);
         }
