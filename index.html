@@ -2,27 +2,30 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Rocket League - Pro Camera & Ball Cam</title>
+    <title>Rocket League - Ultimate Edition</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; border-left: 5px solid #00f2ff; pointer-events: none; }
-        #boost-container { position: absolute; bottom: 30px; right: 30px; width: 200px; height: 25px; background: rgba(255,255,255,0.1); border-radius: 15px; overflow: hidden; border: 2px solid #555; }
-        #boost-bar { width: 100%; height: 100%; background: linear-gradient(90deg, #00d2ff, #3a7bd5); transition: width 0.1s; }
-        #ball-cam-ui { position: absolute; bottom: 30px; left: 30px; color: #fff; font-weight: bold; font-size: 1.2em; text-shadow: 0 0 10px #000; opacity: 0.3; transition: opacity 0.2s; }
-        .active { opacity: 1.0 !important; color: #ffcc00 !important; }
-        kbd { background: #333; padding: 2px 4px; border-radius: 4px; border: 1px solid #555; }
+        body { margin: 0; overflow: hidden; background: #050505; font-family: 'Segoe UI', sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 12px; border-left: 5px solid #ff3b3b; pointer-events: none; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h2 { margin: 0 0 10px 0; color: #ff3b3b; text-transform: uppercase; font-weight: 900; letter-spacing: 1px; }
+        p { margin: 5px 0; font-size: 0.9em; color: #ddd; }
+        kbd { background: #333; padding: 3px 6px; border-radius: 4px; border: 1px solid #555; color: #fff; font-weight: bold; }
+        #boost-container { position: absolute; bottom: 40px; right: 40px; width: 250px; height: 20px; background: rgba(0,0,0,0.5); border-radius: 10px; overflow: hidden; border: 2px solid #444; transform: skewX(-15deg); }
+        #boost-bar { width: 100%; height: 100%; background: linear-gradient(90deg, #ff8c00, #ff3b3b); box-shadow: 0 0 10px #ff3b3b; }
+        #cam-indicator { position: absolute; bottom: 40px; left: 40px; color: #fff; font-weight: 900; font-size: 1.5em; text-transform: uppercase; text-shadow: 2px 2px 0 #000; }
+        .ball-cam-active { color: #ffcc00 !important; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h2 style="margin:0; color: #00f2ff;">Arena Pro v7</h2>
-        <p><kbd>F</kbd> : Toggle <strong>Ball Cam</strong></p>
-        <p><kbd>W/S</kbd> Pitch | <kbd>Space</kbd> Jump/Dodge</p>
-        <p><kbd>E</kbd> Boost | <kbd>Shift</kbd> Air Roll</p>
+        <h2>Definitive Edition</h2>
+        <p><kbd>W</kbd> / <kbd>S</kbd> : Drive Forward / Reverse</p>
+        <p><kbd>A</kbd> / <kbd>D</kbd> : Steer (Hold <kbd>Shift</kbd> to Air Roll)</p>
+        <p><kbd>Space</kbd> : Jump / Directional Dodge</p>
+        <p><kbd>E</kbd> : Rocket Boost | <kbd>F</kbd> : Toggle Ball Cam</p>
     </div>
 
-    <div id="ball-cam-ui">BALL CAM</div>
+    <div id="cam-indicator">CAR CAM</div>
     <div id="boost-container"><div id="boost-bar"></div></div>
 
     <script type="importmap">
@@ -38,130 +41,214 @@
         import * as THREE from 'three';
         import * as CANNON from 'cannon-es';
 
-        // --- 1. SETUP ---
+        // --- 1. CORE ENGINE ---
         const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050510, 0.002);
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -32, 0) });
+        const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -35, 0) });
         
-        // Procedural Sky & Hex Walls (Logic reused from V6)
-        const skyGeo = new THREE.SphereGeometry(1000, 32, 32);
-        const skyMat = new THREE.MeshBasicMaterial({ color: 0x050510, side: THREE.BackSide });
-        scene.add(new THREE.Mesh(skyGeo, skyMat));
-
-        // --- 2. ARENA ---
-        const P_W = 140, P_L = 260, P_H = 80;
+        // --- 2. MATERIALS & PHYSICS FRICTION ---
         const groundMat = new CANNON.Material();
         const carMat = new CANNON.Material();
-        world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, { friction: 1.5, restitution: 0 }));
+        const ballMat = new CANNON.Material();
+        world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, { friction: 1.5, restitution: 0.0 })); // High grip
+        world.addContactMaterial(new CANNON.ContactMaterial(groundMat, ballMat, { friction: 0.3, restitution: 0.7 })); // Bouncy ball
 
-        function createWall(w, h, d, x, y, z, color=0x2244aa, op=0.2) {
-            const body = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(w/2, h/2, d/2)) });
-            body.position.set(x, y, z); world.addBody(body);
-            const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshPhongMaterial({ color, transparent: true, opacity: op }));
-            mesh.position.set(x, y, z); scene.add(mesh);
+        // --- 3. THE ARENA (Procedural Hex Textures & Thick Walls) ---
+        // Generate Hexagon Texture
+        const canvas = document.createElement('canvas');
+        canvas.width = 256; canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        ctx.strokeStyle = '#2244aa'; ctx.lineWidth = 3;
+        function drawHex(x, y, r) {
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) ctx.lineTo(x + r * Math.cos(Math.PI/3 * i), y + r * Math.sin(Math.PI/3 * i));
+            ctx.closePath(); ctx.stroke();
         }
-        createWall(P_W, 2, P_L, 0, -1, 0, 0x1a472a, 1); // Floor
-        createWall(P_W, P_H, 10, 0, P_H/2, P_L/2+5); createWall(P_W, P_H, 10, 0, P_H/2, -P_L/2-5); // Ends
-        createWall(10, P_H, P_L, P_W/2+5, P_H/2, 0); createWall(10, P_H, P_L, -P_W/2-5, P_H/2, 0); // Sides
-        createWall(P_W, 2, P_L, 0, P_H+1, 0); // Roof
+        for(let x=0; x<300; x+=60) for(let y=0; y<300; y+=34) drawHex(x + (y%68?30:0), y, 35);
+        const hexTex = new THREE.CanvasTexture(canvas);
+        hexTex.wrapS = hexTex.wrapT = THREE.RepeatWrapping; hexTex.repeat.set(6, 3);
 
-        // --- 3. CAR & BALL ---
+        const P_W = 160, P_L = 280, P_H = 80; // Pitch dimensions
+        
+        function createWall(w, h, d, x, y, z, matConfig, isSensor=false) {
+            const body = new CANNON.Body({ mass: 0, shape: new CANNON.Box(new CANNON.Vec3(w/2, h/2, d/2)), material: groundMat, isTrigger: isSensor });
+            body.position.set(x, y, z); world.addBody(body);
+            if (!isSensor) {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshPhongMaterial(matConfig));
+                mesh.position.set(x, y, z); scene.add(mesh);
+            }
+        }
+
+        // Floor (Dark pitch with grid)
+        createWall(P_W, 2, P_L, 0, -1, 0, { color: 0x111111 });
+        const grid = new THREE.GridHelper(P_L, 40, 0x333333, 0x1a1a1a);
+        grid.position.y = 0.1; scene.add(grid);
+
+        // Thick Glass Walls
+        const wallMat = { color: 0x4488ff, transparent: true, opacity: 0.15, map: hexTex, shininess: 100 };
+        createWall(P_W, P_H, 10, 0, P_H/2, P_L/2+5, wallMat);  // Back
+        createWall(P_W, P_H, 10, 0, P_H/2, -P_L/2-5, wallMat); // Front
+        createWall(10, P_H, P_L, P_W/2+5, P_H/2, 0, wallMat);  // Right
+        createWall(10, P_H, P_L, -P_W/2-5, P_H/2, 0, wallMat); // Left
+        createWall(P_W, 4, P_L, 0, P_H+2, 0, wallMat);         // Roof
+
+        // Skybox
+        const sky = new THREE.Mesh(new THREE.SphereGeometry(1500, 32, 32), new THREE.MeshBasicMaterial({ color: 0x050510, side: THREE.BackSide, fog: false }));
+        scene.add(sky);
+
+        // Lights
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(50, 150, 50); scene.add(dirLight);
+
+        // --- 4. HIGH QUALITY CAR & BALL ---
         const carGroup = new THREE.Group();
-        const carMesh = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 3), new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
-        const nose = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.2, 0.5), new THREE.MeshStandardMaterial({ color: 0xffcc00 }));
-        nose.position.set(0, -0.2, 1.4); carGroup.add(carMesh, nose);
-        const fire = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.4, 2), new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0 }));
-        fire.position.z = -1.8; fire.rotation.x = Math.PI/2; carGroup.add(fire);
+        const paint = new THREE.MeshStandardMaterial({ color: 0xff3b3b, roughness: 0.3, metalness: 0.5 });
+        const dark = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+        
+        // Chassis & Cabin
+        const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 2.8), paint);
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 1.2), dark);
+        cabin.position.set(0, 0.45, -0.2);
+        // Spoiler (Identifies the back)
+        const spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.4), paint);
+        spoiler.position.set(0, 0.6, -1.3);
+        // Wheels
+        const wGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16); wGeo.rotateZ(Math.PI/2);
+        const w1 = new THREE.Mesh(wGeo, dark); w1.position.set(0.9, -0.1, 1.0);
+        const w2 = new THREE.Mesh(wGeo, dark); w2.position.set(-0.9, -0.1, 1.0);
+        const w3 = new THREE.Mesh(wGeo, dark); w3.position.set(0.9, -0.1, -1.0);
+        const w4 = new THREE.Mesh(wGeo, dark); w4.position.set(-0.9, -0.1, -1.0);
+        
+        // Rocket Thruster
+        const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.4, 1.5, 8), new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0 }));
+        thruster.rotation.x = Math.PI/2; thruster.position.set(0, 0, -1.8);
+
+        carGroup.add(chassis, cabin, spoiler, w1, w2, w3, w4, thruster);
         scene.add(carGroup);
 
-        const carBody = new CANNON.Body({ mass: 15, shape: new CANNON.Sphere(1.4), position: new CANNON.Vec3(0, 5, 100) });
+        // Physics Body (Sphere for smooth wall-riding)
+        const carBody = new CANNON.Body({ mass: 15, shape: new CANNON.Sphere(1.2), position: new CANNON.Vec3(0, 2, 80), material: carMat });
         carBody.angularDamping = 0.95; world.addBody(carBody);
 
-        const ballBody = new CANNON.Body({ mass: 2, shape: new CANNON.Sphere(2.5), position: new CANNON.Vec3(0, 10, 0) });
-        world.addBody(ballBody);
-        const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(2.5, 32, 32), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+        // The Ball
+        const ballBody = new CANNON.Body({ mass: 2, shape: new CANNON.Sphere(2.5), position: new CANNON.Vec3(0, 5, 0), material: ballMat });
+        ballBody.linearDamping = 0.2; world.addBody(ballBody);
+        const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(2.5, 32, 32), new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.2 }));
         scene.add(ballMesh);
 
-        // --- 4. GAME LOGIC ---
-        let boost = 100;
-        let carPitch = 0, carYaw = Math.PI, carRoll = 0;
-        let isBallCam = false;
-        let isFlipping = false, flipT = 0;
+        // --- 5. GAME LOGIC & CONTROLS ---
         const keys = {};
+        let carYaw = Math.PI, carPitch = 0, carRoll = 0;
+        let boostAmount = 100, isBallCam = false, canDodge = true;
+        let flipState = { active: false, type: 'front', progress: 0 };
 
         window.addEventListener('keydown', (e) => {
             keys[e.code] = true;
             if (e.code === 'KeyF') {
                 isBallCam = !isBallCam;
-                document.getElementById('ball-cam-ui').className = isBallCam ? 'active' : '';
+                const ind = document.getElementById('cam-indicator');
+                ind.innerText = isBallCam ? "BALL CAM" : "CAR CAM";
+                isBallCam ? ind.classList.add('ball-cam-active') : ind.classList.remove('ball-cam-active');
             }
             if (e.code === 'Space') {
-                if (carBody.position.y < 1.6) carBody.velocity.y = 16;
-                else if (!isFlipping) { isFlipping = true; flipT = 0; carBody.velocity.y += 5; }
+                const grounded = carBody.position.y < 1.5;
+                if (grounded) { 
+                    carBody.velocity.y = 14; canDodge = true; 
+                } else if (canDodge) {
+                    executeDodge();
+                }
             }
         });
         window.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-        const l = new THREE.PointLight(0xffffff, 15000); l.position.set(0, 60, 0); scene.add(l);
+        function executeDodge() {
+            canDodge = false; flipState.active = true; flipState.progress = 0;
+            const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, carYaw, 0));
+            
+            // Determine dodge direction based on input
+            let dx = 0, dz = 0;
+            if (keys['KeyW']) { dz = 1; flipState.type = 'front'; }
+            if (keys['KeyS']) { dz = -1; flipState.type = 'back'; }
+            if (keys['KeyA']) { dx = 1; flipState.type = 'left'; }
+            if (keys['KeyD']) { dx = -1; flipState.type = 'right'; }
+            if (dx === 0 && dz === 0) { dz = 1; flipState.type = 'front'; } // Default
+
+            const forceVec = new THREE.Vector3(dx, 0, dz).normalize().applyQuaternion(q);
+            carBody.velocity.x += forceVec.x * 22;
+            carBody.velocity.z += forceVec.z * 22;
+            carBody.velocity.y = 0; // Kills vertical momentum for snappy dodge
+        }
 
         function animate() {
             requestAnimationFrame(animate);
             world.fixedStep();
-            const grounded = carBody.position.y < 1.6;
 
+            const grounded = carBody.position.y < 1.5;
+
+            // Compute Forward Vector directly from Yaw
             const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(carPitch, carYaw, carRoll));
-            const fwd = new THREE.Vector3(0,0,1).applyQuaternion(q);
-            const cfwd = new CANNON.Vec3(fwd.x, fwd.y, fwd.z);
+            const forward = new THREE.Vector3(0,0,1).applyQuaternion(q);
+            const cannonFwd = new CANNON.Vec3(forward.x, forward.y, forward.z);
 
-            // Movement
-            if (keys['KeyW']) grounded ? carBody.applyForce(cfwd.scale(1800), carBody.position) : carPitch -= 0.07;
-            if (keys['KeyS']) grounded ? carBody.applyForce(cfwd.scale(-1800), carBody.position) : carPitch += 0.07;
+            // Driving & Pitching
+            if (keys['KeyW']) grounded ? carBody.applyForce(cannonFwd.scale(1800), carBody.position) : carPitch -= 0.08;
+            if (keys['KeyS']) grounded ? carBody.applyForce(cannonFwd.scale(-1800), carBody.position) : carPitch += 0.08;
             
-            if (keys['KeyA']) {
-                if (keys['ShiftLeft'] && !grounded) carRoll += 0.08;
-                else carYaw += 0.06;
-            }
-            if (keys['KeyD']) {
-                if (keys['ShiftLeft'] && !grounded) carRoll -= 0.08;
-                else carYaw -= 0.06;
-            }
+            // Steering & Rolling
+            if (keys['KeyA']) { keys['ShiftLeft'] ? carRoll += 0.08 : carYaw += 0.06; }
+            if (keys['KeyD']) { keys['ShiftLeft'] ? carRoll -= 0.08 : carYaw -= 0.06; }
 
             // Boost
-            if (keys['KeyE'] && boost > 0) {
-                carBody.applyForce(cfwd.scale(2800), carBody.position);
-                boost -= 0.4; fire.material.opacity = 0.8; fire.scale.set(1, Math.random()+0.5, 1);
-            } else { fire.material.opacity = 0; }
-            if (grounded) { boost = Math.min(100, boost + 0.1); carPitch *= 0.8; carRoll *= 0.8; }
-            document.getElementById('boost-bar').style.width = boost + '%';
+            if (keys['KeyE'] && boostAmount > 0) {
+                carBody.applyForce(cannonFwd.scale(3000), carBody.position);
+                boostAmount -= 0.4;
+                thruster.material.opacity = 0.9;
+                thruster.scale.set(1, Math.random() + 0.8, 1);
+            } else { thruster.material.opacity = 0; }
 
-            // Visuals
-            let vPitch = carPitch;
-            if (isFlipping) { flipT += 0.15; vPitch += flipT * Math.PI * 2; if(flipT >= 1) isFlipping = false; }
+            // Auto-Leveling & Regen
+            if (grounded) {
+                carPitch *= 0.8; carRoll *= 0.8;
+                boostAmount = Math.min(100, boostAmount + 0.2);
+                canDodge = true;
+            }
+            document.getElementById('boost-bar').style.width = boostAmount + '%';
 
+            // Visual Flip Animation
+            let visualPitch = carPitch, visualRoll = carRoll;
+            if (flipState.active) {
+                flipState.progress += 0.15;
+                if (flipState.progress >= 1) flipState.active = false;
+                const spin = flipState.progress * Math.PI * 2;
+                if (flipState.type === 'front') visualPitch += spin;
+                else if (flipState.type === 'back') visualPitch -= spin;
+                else if (flipState.type === 'right') visualRoll -= spin;
+                else if (flipState.type === 'left') visualRoll += spin;
+            }
+
+            // Sync Meshes to Physics
             carGroup.position.copy(carBody.position);
-            carGroup.quaternion.setFromEuler(new THREE.Euler(vPitch, carYaw, carRoll));
+            carGroup.quaternion.setFromEuler(new THREE.Euler(visualPitch, carYaw, visualRoll));
             ballMesh.position.copy(ballBody.position);
 
-            // --- CAMERA LOGIC ---
-            // Closer settings: Distance 12, Height 4 (vs previous 25/8)
-            const camDist = 12;
-            const camHeight = 4;
-            
+            // --- FIXED, NON-RUBBISH CAMERA ---
+            // The camera rigidly follows the car, removing the "rubber band" lerp effect.
+            const camDist = 14, camHeight = 5;
+            const camOffset = new THREE.Vector3(0, camHeight, -camDist).applyAxisAngle(new THREE.Vector3(0,1,0), carYaw);
+            camera.position.copy(carGroup.position.clone().add(camOffset));
+
             if (isBallCam) {
-                // Ball Cam: Stay behind car but look at ball
-                const relativePos = new THREE.Vector3(0, camHeight, -camDist).applyAxisAngle(new THREE.Vector3(0,1,0), carYaw);
-                camera.position.lerp(carGroup.position.clone().add(relativePos), 0.15);
                 camera.lookAt(ballMesh.position);
             } else {
-                // Car Cam: Look where car is facing
-                const relativePos = new THREE.Vector3(0, camHeight, -camDist).applyAxisAngle(new THREE.Vector3(0,1,0), carYaw);
-                camera.position.lerp(carGroup.position.clone().add(relativePos), 0.15);
-                camera.lookAt(carGroup.position.clone().add(fwd.clone().multiplyScalar(10)));
+                // Look exactly ahead of the car's nose
+                const lookTarget = carGroup.position.clone().add(new THREE.Vector3(0,0,20).applyAxisAngle(new THREE.Vector3(0,1,0), carYaw));
+                camera.lookAt(lookTarget);
             }
 
             renderer.render(scene, camera);
